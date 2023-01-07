@@ -6,10 +6,14 @@ const port = 3042;
 app.use(cors());
 app.use(express.json());
 
+const { wallets, hashMessage, getAddress } = require("./scripts/wallets");
+const secp = require("ethereum-cryptography/secp256k1");
+const { toHex, utf8ToBytes } = require("ethereum-cryptography/utils");
+
 const balances = {
-  "0x1": 100,
-  "0x2": 50,
-  "0x3": 75,
+  [wallets[0].address]: 100,
+  [wallets[1].address]: 50,
+  [wallets[2].address]: 75,
 };
 
 app.get("/balance/:address", (req, res) => {
@@ -19,17 +23,47 @@ app.get("/balance/:address", (req, res) => {
 });
 
 app.post("/send", (req, res) => {
-  const { sender, recipient, amount } = req.body;
+  // const { signedTransaction, recipient, amount } = req.body;
+  try {
+    const { recipient, amount, signedTransaction } = req.body;
 
-  setInitialBalance(sender);
-  setInitialBalance(recipient);
+    const [signObject, recoveryBit] = signedTransaction;
+    const signature = Uint8Array.from(Object.values(signObject));
 
-  if (balances[sender] < amount) {
-    res.status(400).send({ message: "Not enough funds!" });
-  } else {
-    balances[sender] -= amount;
-    balances[recipient] += amount;
-    res.send({ balance: balances[sender] });
+    const messageHash = hashMessage(recipient + amount);
+
+    // getting sender's public key
+    const senderPublicKey = secp.recoverPublicKey(
+      messageHash,
+      signature,
+      recoveryBit
+    );
+
+    // validating the transaction
+    const isValidTransaction = secp.verify(
+      signature,
+      messageHash,
+      senderPublicKey
+    );
+
+    const sender = getAddress(senderPublicKey);
+
+    setInitialBalance(sender);
+    setInitialBalance(recipient);
+
+    if (!isValidTransaction) {
+      return res.status(400).send({ message: "Invalid transaction!" });
+    }
+
+    if (balances[sender] < amount) {
+      res.status(400).send({ message: "Not enough funds!" });
+    } else {
+      balances[sender] -= amount;
+      balances[recipient] += amount;
+      res.send({ balance: balances[sender] });
+    }
+  } catch (err) {
+    console.log("error in the backend", err);
   }
 });
 
@@ -42,3 +76,5 @@ function setInitialBalance(address) {
     balances[address] = 0;
   }
 }
+
+module.exports = balances;
